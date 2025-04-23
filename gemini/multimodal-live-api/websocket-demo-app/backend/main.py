@@ -1,9 +1,11 @@
 import asyncio
 import json
-
+from aiohttp import web
+from aiohttp_cors import setup as cors_setup, ResourceOptions, CorsViewMixin
 import websockets
 from websockets.legacy.protocol import WebSocketCommonProtocol
 from websockets.legacy.server import WebSocketServerProtocol
+from discord_integration import send_message_to_channel, ask_and_get_reply
 
 HOST = "us-central1-aiplatform.googleapis.com"
 SERVICE_URL = f"wss://{HOST}/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent"
@@ -85,7 +87,37 @@ async def handle_client(client_websocket: WebSocketServerProtocol) -> None:
     await create_proxy(client_websocket, bearer_token)
 
 
-async def main() -> None:
+async def handle_askdiscord(request):
+    """
+    HTTP endpoint to handle Discord function calls from Gemini.
+    
+    Expected JSON body:
+    {
+        "message": "Message to send to Discord",
+        "wait_for_reply": true/false,
+        "timeout": 60
+    }
+    """
+    try:
+        data = await request.json()
+        message = data.get("message")
+        wait_for_reply = data.get("wait_for_reply", False)
+        timeout = data.get("timeout", 60)
+        
+        if not message:
+            return web.json_response({"error": "Message is required"}, status=400)
+        
+        if wait_for_reply:
+            reply = await ask_and_get_reply(message, timeout=timeout)
+            return web.json_response({"reply": reply})
+        else:
+            # Fire and forget
+            asyncio.create_task(send_message_to_channel(message))
+            return web.json_response({"status": "Message sent"})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+async def start_websocket_server():
     """
     Starts the WebSocket server and listens for incoming client connections.
     """
@@ -93,6 +125,38 @@ async def main() -> None:
         print("Running websocket server localhost:8080...")
         # Run forever
         await asyncio.Future()
+
+async def main() -> None:
+    """
+    Starts both the WebSocket server and the HTTP API server.
+    """
+    # Setup HTTP routes
+    app = web.Application()
+    app.router.add_post('/askdiscord', handle_askdiscord)
+    
+    # Configure CORS
+    cors = cors_setup(app, defaults={
+        "*": ResourceOptions(
+            allow_credentials=True,
+            expose_headers="*",
+            allow_headers="*",
+            allow_methods=["POST"]
+        )
+    })
+    
+    # Apply CORS to all routes
+    for route in list(app.router.routes()):
+        cors.add(route)
+    
+    # Start HTTP server
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, 'localhost', 8081)
+    await site.start()
+    print("Running HTTP API server localhost:8081...")
+    
+    # Start WebSocket server
+    await start_websocket_server()
 
 
 if __name__ == "__main__":

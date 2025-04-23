@@ -63,6 +63,15 @@ function connectBtnClick() {
 
     geminiLiveApi.responseModalities = getSelectedResponseModality();
     geminiLiveApi.systemInstructions = getSystemInstructions();
+    
+    // Enable Discord function calling
+    geminiLiveApi.setTools(askDiscordTools);
+    
+    // Set up Discord function call handler
+    geminiLiveApi.onFunctionCall = async (functionCalls) => {
+        console.log("Function call received:", functionCalls);
+        return await handleDiscordFunctionCall(functionCalls);
+    };
 
     geminiLiveApi.onConnectionStarted = () => {
         setAppStatus("connected");
@@ -81,6 +90,9 @@ geminiLiveApi.onReceiveResponse = (messageResponse) => {
     } else if (messageResponse.type == "TEXT") {
         console.log("Gemini said: ", messageResponse.data);
         newModelMessage(messageResponse.data);
+    } else if (messageResponse.type == "FUNCTION_CALL") {
+        console.log("Function call received: ", messageResponse.data);
+        // The function call will be handled by the onFunctionCall handler
     }
 };
 

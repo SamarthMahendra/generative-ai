@@ -1,2 +1,6 @@
 websockets==14.2
 asyncio==3.4.3
+aiohttp==3.9.3
+aiohttp-cors==0.7.0
+python-dotenv==1.0.0
+discord.py==2.3.2

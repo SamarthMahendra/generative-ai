@@ -14,6 +14,9 @@ class GeminiLiveResponseMessage {
         } else if (parts?.length && parts[0].inlineData) {
             this.data = parts[0].inlineData.data;
             this.type = "AUDIO";
+        } else if (data?.toolCall) {
+            this.data = data.toolCall.functionCalls;
+            this.type = "FUNCTION_CALL";
         }
     }
 }
@@ -28,6 +31,7 @@ class GeminiLiveAPI {
 
         this.responseModalities = ["AUDIO"];
         this.systemInstructions = "";
+        this.tools = [];
 
         this.apiHost = apiHost;
         this.serviceUrl = `wss://${this.apiHost}/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent`;
@@ -42,6 +46,11 @@ class GeminiLiveAPI {
 
         this.onErrorMessage = (message) => {
             alert(message);
+        };
+        
+        this.onFunctionCall = async (functionCalls) => {
+            console.log("Default function call handler", functionCalls);
+            return null;
         };
 
         this.accessToken = "";
@@ -59,6 +68,10 @@ class GeminiLiveAPI {
         console.log("setting access token: ", newAccessToken);
         this.accessToken = newAccessToken;
     }
+    
+    setTools(tools) {
+        this.tools = tools;
+    }
 
     connect(accessToken) {
         this.setAccessToken(accessToken);
@@ -73,10 +86,25 @@ class GeminiLiveAPI {
         this.webSocket.send(JSON.stringify(message));
     }
 
-    onReceiveMessage(messageEvent) {
+    async onReceiveMessage(messageEvent) {
         console.log("Message received: ", messageEvent);
         const messageData = JSON.parse(messageEvent.data);
         const message = new GeminiLiveResponseMessage(messageData);
+        
+        if (message.type === "FUNCTION_CALL") {
+            const functionCalls = message.data;
+            console.log("Function call received:", functionCalls);
+            
+            try {
+                const functionResults = await this.onFunctionCall(functionCalls);
+                if (functionResults) {
+                    this.sendToolResponse(functionCalls, functionResults);
+                }
+            } catch (error) {
+                console.error("Error handling function call:", error);
+            }
+        }
+        
         console.log("onReceiveMessageCallBack this ", this);
         this.onReceiveResponse(message);
     }
@@ -102,7 +130,7 @@ class GeminiLiveAPI {
             this.onConnectionStarted();
         };
 
-        this.webSocket.onmessage = this.onReceiveMessage.bind(this);
+        this.webSocket.onmessage = (event) => this.onReceiveMessage(event);
     }
 
     sendInitialSetupMessages() {
@@ -121,6 +149,7 @@ class GeminiLiveAPI {
                 system_instruction: {
                     parts: [{ text: this.systemInstructions }],
                 },
+                tools: this.tools.length > 0 ? this.tools : undefined,
             },
         };
         this.sendMessage(sessionSetupMessage);
@@ -162,6 +191,85 @@ class GeminiLiveAPI {
     sendImageMessage(base64Image, mime_type = "image/jpeg") {
         this.sendRealtimeInputMessage(base64Image, mime_type);
     }
+    
+    sendToolResponse(functionCalls, results) {
+        const functionResponses = functionCalls.map((call, index) => {
+            return {
+                name: call.name,
+                response: {
+                    result: results[index] || null,
+                },
+            };
+        });
+
+        const message = {
+            tool_response: {
+                function_responses: functionResponses,
+            },
+        };
+        
+        this.sendMessage(message);
+    }
+}
+
+// Discord function tools for Gemini
+const askDiscordTools = [
+    {
+        functionDeclarations: [
+            {
+                name: "ask_discord_question",
+                description: "Sends a question to Discord and waits for a reply",
+                parameters: {
+                    type: "OBJECT",
+                    properties: {
+                        question: {
+                            type: "STRING", 
+                            description: "The question to ask on Discord",
+                        },
+                        timeout: {
+                            type: "NUMBER",
+                            description: "Maximum time to wait for a response in seconds"
+                        }
+                    },
+                    required: ["question"]
+                }
+            }
+        ]
+    }
+];
+
+// Handler for Discord functions
+async function handleDiscordFunctionCall(functionCalls) {
+    const results = [];
+    
+    for (const call of functionCalls) {
+        if (call.name === "ask_discord_question") {
+            try {
+                const response = await fetch("http://localhost:8081/askdiscord", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        message: call.args.question,
+                        wait_for_reply: true,
+                        timeout: call.args.timeout || 60
+                    })
+                });
+                
+                const data = await response.json();
+                results.push(data);
+            } catch (error) {
+                console.error("Error asking Discord question:", error);
+                results.push({ error: error.message });
+            }
+        }
+        else {
+            results.push({ error: "Unknown function" });
+        }
+    }
+    
+    return results;
 }
 
 console.log("loaded gemini-live-api.js");
