@@ -91,22 +91,35 @@ class GeminiLiveAPI {
         const messageData = JSON.parse(messageEvent.data);
         const message = new GeminiLiveResponseMessage(messageData);
         
+        // Always notify the app about the message first
+        console.log("onReceiveMessageCallBack this ", this);
+        this.onReceiveResponse(message);
+        
+        // Then handle function calls if present
         if (message.type === "FUNCTION_CALL") {
             const functionCalls = message.data;
             console.log("Function call received:", functionCalls);
             
+            // Signal to the UI that we're about to call a function
+            if (window.addMessageToChat) {
+                window.addMessageToChat("[System] Asking Discord...");
+            }
+            
             try {
                 const functionResults = await this.onFunctionCall(functionCalls);
                 if (functionResults) {
-                    this.sendToolResponse(functionCalls, functionResults);
+                    // Small delay to give users time to read the Discord message
+                    setTimeout(() => {
+                        this.sendToolResponse(functionCalls, functionResults);
+                    }, 1000);
                 }
             } catch (error) {
                 console.error("Error handling function call:", error);
+                if (window.addMessageToChat) {
+                    window.addMessageToChat("[Error] Failed to communicate with Discord");
+                }
             }
         }
-        
-        console.log("onReceiveMessageCallBack this ", this);
-        this.onReceiveResponse(message);
     }
 
     setupWebSocketToService() {
@@ -145,11 +158,13 @@ class GeminiLiveAPI {
                 model: this.modelUri,
                 generation_config: {
                     response_modalities: this.responseModalities,
+                    temperature: 1.0,
                 },
                 system_instruction: {
                     parts: [{ text: this.systemInstructions }],
                 },
                 tools: this.tools.length > 0 ? this.tools : undefined,
+
             },
         };
         this.sendMessage(sessionSetupMessage);
@@ -193,6 +208,20 @@ class GeminiLiveAPI {
     }
     
     sendToolResponse(functionCalls, results) {
+        // When we send a function response, we're responding to Gemini
+        // Display the Discord response in the UI for the user to see
+        for (const result of results) {
+            if (result && result.reply) {
+                // Add a visual indicator that this is from Discord
+                const discordMessage = `[Discord] ${result.reply}`;
+                // Display this message in the chat interface
+                if (window.addMessageToChat) {
+                    window.addMessageToChat(discordMessage);
+                }
+                console.log("Discord response:", discordMessage);
+            }
+        }
+        
         const functionResponses = functionCalls.map((call, index) => {
             return {
                 name: call.name,
@@ -207,6 +236,11 @@ class GeminiLiveAPI {
                 function_responses: functionResponses,
             },
         };
+        
+        // Let the UI know we're about to send a response to Gemini
+        if (window.beforeSendingFunctionResponse) {
+            window.beforeSendingFunctionResponse();
+        }
         
         this.sendMessage(message);
     }

@@ -5,8 +5,8 @@ window.addEventListener("load", (event) => {
     setAvailableMicrophoneOptions();
 });
 
-const PROXY_URL = "wss://[THE_URL_YOU_COPIED_WITHOUT_HTTP]";
-const PROJECT_ID = "your project id";
+const PROXY_URL = "ws://localhost:8080";
+const PROJECT_ID = "cosmic-palace-457723-r1";
 const MODEL = "gemini-2.0-flash-live-preview-04-09";
 const API_HOST = "us-central1-aiplatform.googleapis.com";
 
